@@ -75,7 +75,7 @@ def UniformSample_original_python(dataset):
         positem = int(posForUser[np.random.randint(0, len(posForUser))])
 
         negitem = sample_neg_global_2hop_intersection_debiased(
-            dataset, user, positem, alpha=0.75
+            dataset, user, positem, alpha=world.config['alpha']
         )
 
         S.append([user, positem, negitem])
