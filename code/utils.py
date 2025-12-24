@@ -65,21 +65,22 @@ def UniformSample_original_python(dataset):
     user_num = dataset.trainDataSize
     users = np.random.randint(0, dataset.n_users, user_num)
     allPos = dataset.allPos
+
+    rng = np.random.default_rng(world.seed)  # 1 lần
     S = []
 
     for user in users:
         posForUser = allPos[user]
         if len(posForUser) == 0:
             continue
-
-        positem = int(posForUser[np.random.randint(0, len(posForUser))])
+        positem = int(posForUser[rng.integers(0, len(posForUser))])
 
         negitem = sample_neg_global_2hop_intersection_debiased(
-            dataset, user, positem, alpha=world.config['alpha']
+            dataset, user, positem, rng,
+            alpha=world.config['alpha'],
+            max_trials=60
         )
-
         S.append([user, positem, negitem])
-
     return np.array(S, dtype=np.int32)
 
 # ===================end samplers==========================
@@ -267,12 +268,10 @@ def getLabel(test_data, pred_data):
 # ====================end Metrics=============================
 # =========================================================
 
-def sample_neg_global_2hop_intersection_debiased(dataset, user, positem,
+def sample_neg_global_2hop_intersection_debiased(dataset, user, positem, rng,
                                                  alpha=0.75,
-                                                 max_trials=300):
-    rng = np.random.default_rng(None)
-
-    posSet_u = dataset.posSet[user]          # O(1)
+                                                 max_trials=60):
+    posSet_u = dataset.posSet[user]
     users_pos = _item_users(dataset, positem)
 
     for _ in range(max_trials):
@@ -280,18 +279,15 @@ def sample_neg_global_2hop_intersection_debiased(dataset, user, positem,
         if neg in posSet_u:
             continue
 
-        # 2-hop reject: share at least one user with positem
         users_neg = _item_users(dataset, neg)
         if _has_intersection_sorted(users_pos, users_neg):
             continue
 
-        # debias popular
         pop = float(dataset.item_pop[neg] + 1.0)
-        accept = 1.0 / (pop ** alpha)
-        if rng.random() < accept:
+        if rng.random() < (1.0 / (pop ** alpha)):
             return neg
 
-    # fallback: chỉ cần hợp lệ và không 2-hop
+    # fallback
     while True:
         neg = int(rng.integers(0, dataset.m_items))
         if neg in posSet_u:
