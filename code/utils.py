@@ -62,38 +62,28 @@ def UniformSample_original(dataset, neg_ratio = 1):
     return S
 
 def UniformSample_original_python(dataset):
-    """
-    the original impliment of BPR Sampling in LightGCN
-    :return:
-        np.array
-    """
-    total_start = time()
-    dataset : BasicDataset
     user_num = dataset.trainDataSize
     users = np.random.randint(0, dataset.n_users, user_num)
     allPos = dataset.allPos
     S = []
-    sample_time1 = 0.
-    sample_time2 = 0.
-    for i, user in enumerate(users):
-        start = time()
+
+    for user in users:
         posForUser = allPos[user]
         if len(posForUser) == 0:
             continue
-        sample_time2 += time() - start
-        posindex = np.random.randint(0, len(posForUser))
-        positem = posForUser[posindex]
-        while True:
-            negitem = np.random.randint(0, dataset.m_items)
-            if negitem in posForUser:
-                continue
-            else:
-                break
+
+        positem = int(posForUser[np.random.randint(0, len(posForUser))])
+
+        negitem = sample_neg_global_local2hop_debiased(
+            dataset, user, positem,
+            alpha=0.75,
+            max_cousers=80,
+            max_extra_items=8000
+        )
+
         S.append([user, positem, negitem])
-        end = time()
-        sample_time1 += end - start
-    total = time() - total_start
-    return np.array(S)
+
+    return np.array(S, dtype=np.int32)
 
 # ===================end samplers==========================
 # =====================utils====================================
@@ -279,3 +269,69 @@ def getLabel(test_data, pred_data):
 
 # ====================end Metrics=============================
 # =========================================================
+
+def build_ban_set_local_2hop(dataset, user, positem,
+                            max_cousers=80,
+                            max_extra_items=8000,
+                            seed=None):
+    """
+    ban = pos(user) ∪ (union items(v) với v ∈ Users(positem))
+    """
+    rng = np.random.default_rng(seed)
+
+    # pos cũ của user u
+    ban = set(dataset.posSet[user])  # copy
+
+    iu = dataset.item_user_csr
+    start, end = iu.indptr[positem], iu.indptr[positem + 1]
+    users = iu.indices[start:end]
+
+    if users.size == 0:
+        return ban
+
+    # giới hạn co-users để tránh item quá popular
+    if users.size > max_cousers:
+        users = rng.choice(users, size=max_cousers, replace=False)
+
+    # union items của co-users
+    for v in users:
+        v = int(v)
+        if v == user:
+            continue
+        ban.update(dataset.allPos[v])  # hoặc dataset._allPos[v]
+        if len(ban) >= max_extra_items:
+            break
+
+    return ban
+def sample_neg_global_local2hop_debiased(dataset, user, positem,
+                                         alpha=0.75,
+                                         max_trials=250,
+                                         max_cousers=80,
+                                         max_extra_items=8000,
+                                         seed=None):
+    """
+    Sample neg toàn cục, nhưng:
+      - reject nếu neg ∈ ban(local 2-hop)
+      - giảm bias popular: xác suất nhận ~ 1/(pop^alpha)
+    """
+    rng = np.random.default_rng(seed)
+    ban = build_ban_set_local_2hop(dataset, user, positem,
+                                   max_cousers=max_cousers,
+                                   max_extra_items=max_extra_items,
+                                   seed=seed)
+
+    for _ in range(max_trials):
+        neg = int(rng.integers(0, dataset.m_items))
+        if neg in ban:
+            continue
+
+        pop = float(dataset.item_pop[neg] + 1.0)
+        accept = 1.0 / (pop ** alpha)   # <= 1
+        if rng.random() < accept:
+            return neg
+
+    # fallback: chỉ cần hợp lệ
+    while True:
+        neg = int(rng.integers(0, dataset.m_items))
+        if neg not in ban:
+            return neg

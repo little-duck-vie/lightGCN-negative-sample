@@ -287,6 +287,7 @@ class Loader(BasicDataset):
         # pre-calculate
         self._allPos = self.getUserPosItems(list(range(self.n_user)))
         self.__testDict = self.__build_test()
+        self._build_neg_sampling_helpers()
         print(f"{world.dataset} is ready to go")
 
     @property
@@ -405,3 +406,12 @@ class Loader(BasicDataset):
     #     for user in users:
     #         negItems.append(self.allNeg[user])
     #     return negItems
+    def _build_neg_sampling_helpers(self):
+        # 1) posSet để check O(1)
+        self.posSet = [set(p) for p in self.allPos]   # hoặc self._allPos, tùy code bạn dùng
+
+        # 2) item -> users CSR
+        self.item_user_csr = self.UserItemNet.T.tocsr()
+
+        # 3) popularity (giảm bias)
+        self.item_pop = np.asarray(self.UserItemNet.sum(axis=0)).ravel().astype(np.int64)
