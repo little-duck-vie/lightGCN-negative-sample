@@ -74,11 +74,8 @@ def UniformSample_original_python(dataset):
 
         positem = int(posForUser[np.random.randint(0, len(posForUser))])
 
-        negitem = sample_neg_global_local2hop_debiased(
-            dataset, user, positem,
-            alpha=0.75,
-            max_cousers=80,
-            max_extra_items=8000
+        negitem = sample_neg_global_2hop_intersection_debiased(
+            dataset, user, positem, alpha=0.75
         )
 
         S.append([user, positem, negitem])
@@ -270,68 +267,52 @@ def getLabel(test_data, pred_data):
 # ====================end Metrics=============================
 # =========================================================
 
-def build_ban_set_local_2hop(dataset, user, positem,
-                            max_cousers=80,
-                            max_extra_items=8000,
-                            seed=None):
-    """
-    ban = pos(user) ∪ (union items(v) với v ∈ Users(positem))
-    """
-    rng = np.random.default_rng(seed)
+def sample_neg_global_2hop_intersection_debiased(dataset, user, positem,
+                                                 alpha=0.75,
+                                                 max_trials=300):
+    rng = np.random.default_rng(None)
 
-    # pos cũ của user u
-    ban = set(dataset.posSet[user])  # copy
-
-    iu = dataset.item_user_csr
-    start, end = iu.indptr[positem], iu.indptr[positem + 1]
-    users = iu.indices[start:end]
-
-    if users.size == 0:
-        return ban
-
-    # giới hạn co-users để tránh item quá popular
-    if users.size > max_cousers:
-        users = rng.choice(users, size=max_cousers, replace=False)
-
-    # union items của co-users
-    for v in users:
-        v = int(v)
-        if v == user:
-            continue
-        ban.update(dataset.allPos[v])  # hoặc dataset._allPos[v]
-        if len(ban) >= max_extra_items:
-            break
-
-    return ban
-def sample_neg_global_local2hop_debiased(dataset, user, positem,
-                                         alpha=0.75,
-                                         max_trials=250,
-                                         max_cousers=80,
-                                         max_extra_items=8000,
-                                         seed=None):
-    """
-    Sample neg toàn cục, nhưng:
-      - reject nếu neg ∈ ban(local 2-hop)
-      - giảm bias popular: xác suất nhận ~ 1/(pop^alpha)
-    """
-    rng = np.random.default_rng(seed)
-    ban = build_ban_set_local_2hop(dataset, user, positem,
-                                   max_cousers=max_cousers,
-                                   max_extra_items=max_extra_items,
-                                   seed=seed)
+    posSet_u = dataset.posSet[user]          # O(1)
+    users_pos = _item_users(dataset, positem)
 
     for _ in range(max_trials):
         neg = int(rng.integers(0, dataset.m_items))
-        if neg in ban:
+        if neg in posSet_u:
             continue
 
+        # 2-hop reject: share at least one user with positem
+        users_neg = _item_users(dataset, neg)
+        if _has_intersection_sorted(users_pos, users_neg):
+            continue
+
+        # debias popular
         pop = float(dataset.item_pop[neg] + 1.0)
-        accept = 1.0 / (pop ** alpha)   # <= 1
+        accept = 1.0 / (pop ** alpha)
         if rng.random() < accept:
             return neg
 
-    # fallback: chỉ cần hợp lệ
+    # fallback: chỉ cần hợp lệ và không 2-hop
     while True:
         neg = int(rng.integers(0, dataset.m_items))
-        if neg not in ban:
+        if neg in posSet_u:
+            continue
+        if not _has_intersection_sorted(users_pos, _item_users(dataset, neg)):
             return neg
+
+def _item_users(dataset, item):
+    csr = dataset.item_user_csr
+    s, e = csr.indptr[item], csr.indptr[item + 1]
+    return csr.indices[s:e]   # sorted np array
+
+def _has_intersection_sorted(a, b):
+    i = j = 0
+    la, lb = len(a), len(b)
+    while i < la and j < lb:
+        ai, bj = a[i], b[j]
+        if ai == bj:
+            return True
+        if ai < bj:
+            i += 1
+        else:
+            j += 1
+    return False
