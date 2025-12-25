@@ -321,11 +321,26 @@ class Loader(BasicDataset):
             self.user_neighbors[u] = [v for v, _ in top_neighbors]
 
             # Build extended item set from neighbors
-            extended = set()
+            extended_candidate_items = []
+
             for v in self.user_neighbors[u]:
-                extended |= self.user_pos[v]
-            extended -= self.user_pos[u]
-            self.extended_pos_items[u] = extended
+                # Lấy các item của hàng xóm v, bỏ item đã có của u
+                for i in self.user_pos[v]:
+                    if i not in self.user_pos[u]:
+                        extended_candidate_items.append(i)
+
+            # Đếm độ phổ biến trong các hàng xóm
+            from collections import Counter
+            item_counts = Counter(extended_candidate_items)
+
+            # Sắp xếp theo phổ biến nhất (trong các hàng xóm)
+            sorted_items = [item for item, count in item_counts.most_common()]
+
+            # Giới hạn số lượng: k = 1/2 số lượng pos gốc
+            k = max(1, len(self.user_pos[u]) // 2)
+            top_k_items = sorted_items[:k]
+
+            self.extended_pos_items[u] = set(top_k_items)
 
         self.__testDict = self.__build_test()
         self._build_neg_sampling_helpers()
