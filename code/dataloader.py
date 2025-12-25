@@ -286,6 +286,47 @@ class Loader(BasicDataset):
         self.items_D[self.items_D == 0.] = 1.
         # pre-calculate
         self._allPos = self.getUserPosItems(list(range(self.n_user)))
+        # === Build neighbor-based positive extension ===
+        print("Building extended positive items via neighbor sharing...")
+
+        # 1. Build user_pos and item_users
+        self.user_pos = {u: set(self._allPos[u]) for u in range(self.n_user)}
+        self.item_users = {i: set() for i in range(self.m_item)}
+        for u, items in self.user_pos.items():
+            for i in items:
+                self.item_users[i].add(u)
+
+        # 2. Calculate item frequency and remove popular items
+        item_freq = {i: len(users) for i, users in self.item_users.items()}
+        hub_threshold = 100  # or adjust via config
+        self.popular_items = {i for i, c in item_freq.items() if c > hub_threshold}
+        print(f"Filtered out {len(self.popular_items)} popular items (>{hub_threshold} users).")
+
+        # 3. Compute neighbors and extended positives
+        import heapq
+        M = 5  # top-M neighbors, can be moved to args
+        self.user_neighbors = {}
+        self.extended_pos_items = {}
+
+        for u in range(self.n_user):
+            counter = {}
+            for i in self.user_pos[u]:
+                if i in self.popular_items:
+                    continue
+                for v in self.item_users[i]:
+                    if v == u:
+                        continue
+                    counter[v] = counter.get(v, 0) + 1
+            top_neighbors = heapq.nlargest(M, counter.items(), key=lambda x: x[1])
+            self.user_neighbors[u] = [v for v, _ in top_neighbors]
+
+            # Build extended item set from neighbors
+            extended = set()
+            for v in self.user_neighbors[u]:
+                extended |= self.user_pos[v]
+            extended -= self.user_pos[u]
+            self.extended_pos_items[u] = extended
+
         self.__testDict = self.__build_test()
         self._build_neg_sampling_helpers()
         print(f"{world.dataset} is ready to go")

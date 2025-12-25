@@ -65,8 +65,7 @@ def UniformSample_original_python(dataset):
     user_num = dataset.trainDataSize
     users = np.random.randint(0, dataset.n_users, user_num)
     allPos = dataset.allPos
-
-    rng = np.random.default_rng(world.seed)  # 1 lần
+    rng = np.random.default_rng(world.seed)
     S = []
 
     for user in users:
@@ -75,11 +74,12 @@ def UniformSample_original_python(dataset):
             continue
         positem = int(posForUser[rng.integers(0, len(posForUser))])
 
-        negitem = sample_neg_global_2hop_intersection_debiased(
-            dataset, user, positem, rng,
-            alpha=world.config['alpha'],
-            max_trials=60
-        )
+        # === Tạo neg sample: tránh cả extended items ===
+        while True:
+            negitem = rng.integers(0, dataset.m_items)
+            if (negitem not in dataset.user_pos[user]) and (negitem not in dataset.extended_pos_items[user]):
+                break
+
         S.append([user, positem, negitem])
     return np.array(S, dtype=np.int32)
 
@@ -268,47 +268,3 @@ def getLabel(test_data, pred_data):
 # ====================end Metrics=============================
 # =========================================================
 
-def sample_neg_global_2hop_intersection_debiased(dataset, user, positem, rng,
-                                                 alpha=0.75,
-                                                 max_trials=60):
-    posSet_u = dataset.posSet[user]
-    users_pos = _item_users(dataset, positem)
-
-    for _ in range(max_trials):
-        neg = int(rng.integers(0, dataset.m_items))
-        if neg in posSet_u:
-            continue
-
-        users_neg = _item_users(dataset, neg)
-        if _has_intersection_sorted(users_pos, users_neg):
-            continue
-
-        pop = float(dataset.item_pop[neg] + 1.0)
-        if rng.random() < (1.0 / (pop ** alpha)):
-            return neg
-
-    # fallback
-    while True:
-        neg = int(rng.integers(0, dataset.m_items))
-        if neg in posSet_u:
-            continue
-        if not _has_intersection_sorted(users_pos, _item_users(dataset, neg)):
-            return neg
-
-def _item_users(dataset, item):
-    csr = dataset.item_user_csr
-    s, e = csr.indptr[item], csr.indptr[item + 1]
-    return csr.indices[s:e]   # sorted np array
-
-def _has_intersection_sorted(a, b):
-    i = j = 0
-    la, lb = len(a), len(b)
-    while i < la and j < lb:
-        ai, bj = a[i], b[j]
-        if ai == bj:
-            return True
-        if ai < bj:
-            i += 1
-        else:
-            j += 1
-    return False
