@@ -298,7 +298,7 @@ class Loader(BasicDataset):
 
         # 2. Calculate item frequency and remove popular items
         item_freq = {i: len(users) for i, users in self.item_users.items()}
-        hub_threshold = 100  # or adjust via config
+        hub_threshold = 200  # or adjust via config
         self.popular_items = {i for i, c in item_freq.items() if c > hub_threshold}
         print(f"Filtered out {len(self.popular_items)} popular items (>{hub_threshold} users).")
 
@@ -337,7 +337,7 @@ class Loader(BasicDataset):
             sorted_items = [item for item, count in item_counts.most_common()]
 
             # Giới hạn số lượng: k = 1/2 số lượng pos gốc
-            k = max(1, len(self.user_pos[u])*1.5)
+            k = max(1, len(self.user_pos[u]))
             top_k_items = sorted_items[:k]
 
             self.extended_pos_items[u] = set(top_k_items)
